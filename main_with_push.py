@@ -111,6 +111,9 @@ def save_group_id(group_id):
     """保存有效的群組或聊天室 ID 以供定時推播使用"""
     if not group_id:
         return
+    # 嚴格防護：只保存以 'C' (群組) 或 'R' (多人聊天室) 開頭的 ID，排除以 'U' (個人使用者) 開頭的 ID，確保私聊絕對不會被推播！
+    if not (group_id.startswith("C") or group_id.startswith("R")):
+        return
     try:
         group_ids = set()
         if os.path.exists("group_ids.txt"):
