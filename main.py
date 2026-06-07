@@ -239,11 +239,15 @@ def gemini_chat(user_input, user_id):
     last_activity[user_id] = now
     chat = chat_sessions[user_id]
 
+    now_str = datetime.now().strftime("%Y年%m月%d日")
+    time_context = f"【系統提示：當前的真實地球日期是 {now_str}。請以此作為「今天、現在、當下」來計算與分析流年行運，絕對不要搞錯年份！】\n"
+
     try:
         if user_id in user_images:
             upload_image = PIL.Image.open(user_images[user_id])
             # 修正引導詞：強烈指示 Gemini 該圓形圖表為西洋占星座星盤/本命盤，而非蛋糕或其它非占星物件
             prompt_with_context = (
+                f"{time_context}"
                 f"【使用者上傳了一張圖片。這是一張西洋占星座星盤/本命盤（Natal Chart）圖。"
                 f"請仔細識別星盤上的星座、行星、宮位與相位，並結合以下問題回答。】\n"
                 f"問題：{user_input}"
@@ -252,7 +256,8 @@ def gemini_chat(user_input, user_id):
             # 修正記憶洩漏：回答後立即移除圖片記憶，避免後續文字對話重複傳送該圖片
             user_images.pop(user_id, None)
         else:
-            response = chat.send_message(user_input)
+            prompt_with_context = f"{time_context}問題：{user_input}"
+            response = chat.send_message(prompt_with_context)
 
         print(f"[Q] {user_input}")
         print(f"[A] {response.text}")
