@@ -6,10 +6,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
-from flatlib.datetime import Datetime
-from flatlib.geopos import GeoPos
-from flatlib.chart import Chart
-from flatlib import const
+import ephem
 
 import google.generativeai as genai
 import PIL
@@ -215,43 +212,45 @@ def message_image(event):
                 print(f"Failed to send failure message: {reply_err}")
 
 def get_current_astrology_context():
-    """使用 flatlib 計算當下（即時）所有行星在黃道十二星座的精確位置"""
+    """使用 ephem 計算當下（即時）所有行星在黃道十二星座的精確位置"""
     try:
         now = datetime.now(timezone.utc)
-        date_str = now.strftime('%Y/%m/%d')
-        time_str = now.strftime('%H:%M')
+        date_str = now.strftime('%Y/%m/%d %H:%M:%S')
         
-        date = Datetime(date_str, time_str, '+00:00')
-        pos = GeoPos('25n03', '121e30')  # 預設台北座標
-        chart = Chart(date, pos, IDs=const.LIST_OBJECTS)
-        
+        # ephem 行星對象
         planets = [
-            (const.SUN, '太陽'),
-            (const.MOON, '月亮'),
-            (const.MERCURY, '水星'),
-            (const.VENUS, '金星'),
-            (const.MARS, '火星'),
-            (const.JUPITER, '木星'),
-            (const.SATURN, '土星'),
-            (const.URANUS, '天王星'),
-            (const.NEPTUNE, '海王星'),
-            (const.PLUTO, '冥王星')
+            (ephem.Sun(), '太陽'),
+            (ephem.Moon(), '月亮'),
+            (ephem.Mercury(), '水星'),
+            (ephem.Venus(), '金星'),
+            (ephem.Mars(), '火星'),
+            (ephem.Jupiter(), '木星'),
+            (ephem.Saturn(), '土星'),
+            (ephem.Uranus(), '天王星'),
+            (ephem.Neptune(), '海王星'),
+            (ephem.Pluto(), '冥王星')
         ]
         
-        sign_map = {
-            'Aries': '牡羊座', 'Taurus': '金牛座', 'Gemini': '雙子座', 'Cancer': '巨蟹座',
-            'Leo': '獅子座', 'Virgo': '處女座', 'Libra': '天秤座', 'Scorpio': '天蠍座',
-            'Sagittarius': '射手座', 'Capricorn': '摩羯座', 'Aquarius': '水瓶座', 'Pisces': '雙魚座'
-        }
+        sign_map = [
+            '牡羊座', '金牛座', '雙子座', '巨蟹座', '獅子座', '處女座',
+            '天秤座', '天蠍座', '射手座', '摩羯座', '水瓶座', '雙魚座'
+        ]
         
         out = []
-        for pid, name in planets:
-            obj = chart.getObject(pid)
-            if obj:
-                sign_zh = sign_map.get(obj.sign, obj.sign)
-                deg_in_sign = obj.lon % 30
-                out.append(f"{name}在{sign_zh} ({deg_in_sign:.1f}°)")
-                
+        for body, name in planets:
+            body.compute(date_str)
+            # 取得黃道經度 (Ecliptic Longitude)
+            ecl = ephem.Ecliptic(body)
+            # 弧度轉換為角度 (radians -> degrees)
+            lon_deg = float(ecl.lon) * 180.0 / ephem.pi
+            lon_deg = lon_deg % 360.0  # 確保在 0~360 度之間
+            
+            sign_index = int(lon_deg // 30)
+            sign_zh = sign_map[sign_index]
+            deg_in_sign = lon_deg % 30
+            
+            out.append(f"{name}在{sign_zh} ({deg_in_sign:.1f}°)")
+            
         return "，".join(out)
     except Exception as e:
         print(f"Error calculating astrology context: {e}")
