@@ -1,7 +1,10 @@
 import sys
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time as datetime_time
+import json
+import threading
+import time
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -31,6 +34,7 @@ from linebot.v3.messaging import (
     MessagingApiBlob,
     ReplyMessageRequest,
     TextMessage,
+    PushMessageRequest,
 )
 
 # ── Gemini 設定 ──────────────────────────────────────────────
@@ -107,6 +111,26 @@ last_activity = {}
 user_images = {}
 SESSION_TIMEOUT = timedelta(days=7)
 
+# ── 工具函數：儲存群組 ID ──────────────────────────────────────
+def save_group_id(group_id):
+    """保存有效的群組或聊天室 ID 以供定時推播使用"""
+    if not group_id:
+        return
+    # 嚴格防護：只保存以 'C' (群組) 或 'R' (多人聊天室) 開頭的 ID，排除以 'U' (個人使用者) 開頭的 ID，確保私聊絕對不會被推播！
+    if not (group_id.startswith("C") or group_id.startswith("R")):
+        return
+    try:
+        group_ids = set()
+        if os.path.exists("group_ids.txt"):
+            with open("group_ids.txt", "r", encoding="utf-8") as f:
+                group_ids = {line.strip() for line in f if line.strip()}
+        if group_id not in group_ids:
+            with open("group_ids.txt", "a", encoding="utf-8") as f:
+                f.write(f"{group_id}\n")
+            print(f"[Scheduler] Saved new group ID: {group_id}")
+    except Exception as e:
+        print(f"Error saving group ID: {e}")
+
 # ── 工具函數 ──────────────────────────────────────────────────
 def is_mentioned_in_text(event):
     """文字訊息的 @ 判斷"""
@@ -134,6 +158,12 @@ def callback():
 # ── 加入群組事件 ──────────────────────────────────────────────
 @handler.add(JoinEvent)
 def handle_join(event):
+    # 保存群組 ID
+    if event.source.type == "group":
+        save_group_id(event.source.group_id)
+    elif event.source.type == "room":
+        save_group_id(event.source.room_id)
+
     # 當機器人加入群組時發送歡迎訊息
     try:
         with ApiClient(configuration) as api_client:
@@ -150,8 +180,13 @@ def handle_join(event):
 # ── 文字訊息 ──────────────────────────────────────────────────
 @handler.add(MessageEvent, message=TextMessageContent)
 def message_text(event):
-    # 群組：沒被 @ 就不回應
-    if event.source.type in ("group", "room"):
+    # 保存群組 ID
+    if event.source.type == "group":
+        save_group_id(event.source.group_id)
+        if not is_mentioned_in_text(event):
+            return
+    elif event.source.type == "room":
+        save_group_id(event.source.room_id)
         if not is_mentioned_in_text(event):
             return
 
@@ -174,6 +209,12 @@ def message_text(event):
 # ── 圖片訊息 ──────────────────────────────────────────────────
 @handler.add(MessageEvent, message=ImageMessageContent)
 def message_image(event):
+    # 保存群組 ID
+    if event.source.type == "group":
+        save_group_id(event.source.group_id)
+    elif event.source.type == "room":
+        save_group_id(event.source.room_id)
+
     user_id = event.source.user_id
 
     try:
@@ -318,6 +359,175 @@ def gemini_chat(user_input, user_id):
     except Exception as e:
         print(f"Gemini error: {e}")
         return "占星助理暫時出了點問題，請稍後再試 🌙"
+
+# ── 定時推播占星知識邏輯 ───────────────────────────────────────────
+def generate_astrology_knowledge():
+    """使用 Gemini 生成一則約 200~250 字的占星知識"""
+    try:
+        push_model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash",
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+            generation_config={
+                "temperature": 0.85,
+                "top_p": 0.95,
+                "max_output_tokens": 1024,
+            },
+            system_instruction=(
+                "你是一位專業且溫暖的西洋占星助理。請撰寫一則有趣、深入且好懂的占星知識分享。"
+                "主題可以包含：星座神話、行星相位意涵、宮位解析小技巧或行運對日常生活的影響等。"
+                "使用繁體中文。請控制字數在 200~250 字之間，不可超過 250 字。語氣要親切專業。"
+            )
+        )
+        response = push_model.generate_content("請提供一則西洋占星知識分享，字數在 200 至 250 字之間。")
+        return response.text.strip()
+    except Exception as e:
+        print(f"[Scheduler] Error generating astrology knowledge: {e}")
+        return (
+            "【早安！今日占星知識分享】🔮\n"
+            "您知道嗎？在西洋占星中，月亮星座代表了我們潛意識的真實情感需求與安全感來源。"
+            "例如，月亮在牡羊座的人，情緒來得快去得也快，需要直接且坦率的情感表達；"
+            "而月亮在金牛座的人則渴望穩定與感官的舒適，常常透過美食或安靜的個人空間來療癒自我。"
+            "理解自己的月亮星座，能幫助我們在面對壓力和負面情緒時，找到最適合自己的心理排解與自我照顧方式喔！✨"
+        )
+
+def push_to_groups(message):
+    """將訊息推播到 group_ids.txt 中的所有群組"""
+    if not os.path.exists("group_ids.txt"):
+        print("[Scheduler] No group IDs file found. Skipping push.")
+        return
+    
+    with open("group_ids.txt", "r", encoding="utf-8") as f:
+        group_ids = [line.strip() for line in f if line.strip()]
+
+    if not group_ids:
+        print("[Scheduler] No group IDs saved. Skipping push.")
+        return
+
+    print(f"[Scheduler] Starting push to {len(group_ids)} groups...")
+    failed_groups = []
+
+    with ApiClient(configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        for gid in group_ids:
+            try:
+                line_bot_api.push_message(
+                    PushMessageRequest(
+                        to=gid,
+                        messages=[TextMessage(text=message)]
+                    )
+                )
+                print(f"[Scheduler] Successfully pushed to {gid}")
+            except Exception as e:
+                print(f"[Scheduler] Failed to push to {gid}: {e}")
+                # 判斷是否為無效/已退出的群組 ID
+                if "Failed to send messages" in str(e) or "400" in str(e) or "404" in str(e):
+                    failed_groups.append(gid)
+    
+    # 清除失效的群組 ID
+    if failed_groups:
+        try:
+            current_ids = [g for g in group_ids if g not in failed_groups]
+            with open("group_ids.txt", "w", encoding="utf-8") as f:
+                for cid in current_ids:
+                    f.write(f"{cid}\n")
+            print(f"[Scheduler] Cleaned up {len(failed_groups)} invalid group IDs.")
+        except Exception as e:
+            print(f"[Scheduler] Error cleaning invalid group IDs: {e}")
+
+def get_next_push_time(base_time, interval_days):
+    """計算基於 base_time 加上指定天數後的早上 9 點"""
+    target_date = base_time + timedelta(days=interval_days)
+    return datetime.combine(target_date.date(), datetime_time(9, 0, 0))
+
+def run_scheduler():
+    """後台排程器主循環"""
+    print("[Scheduler] Scheduler thread started.")
+    STATE_FILE = "scheduler_state.json"
+    
+    while True:
+        try:
+            state = {}
+            if os.path.exists(STATE_FILE):
+                try:
+                    with open(STATE_FILE, "r", encoding="utf-8") as f:
+                        state = json.load(f)
+                except Exception as je:
+                    print(f"[Scheduler] Error loading state JSON: {je}")
+
+            now = datetime.now()
+
+            # 初始化狀態
+            if not state or "next_push_time" not in state:
+                today_9am = datetime.combine(now.date(), datetime_time(9, 0, 0))
+                if now < today_9am:
+                    next_push = today_9am
+                else:
+                    next_push = today_9am + timedelta(days=1)
+                
+                state = {
+                    "last_push_time": None,
+                    "next_interval": 2, # 交替模式：2 -> 3 -> 2 -> 3
+                    "next_push_time": next_push.isoformat()
+                }
+                with open(STATE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=4)
+                print(f"[Scheduler] Initialized state. Next push: {next_push.isoformat()}")
+
+            next_push_time = datetime.fromisoformat(state["next_push_time"])
+            next_interval = state.get("next_interval", 2)
+
+            # 判斷是否抵達或超過下次推播時間
+            if now >= next_push_time:
+                print(f"[Scheduler] Current time {now.isoformat()} >= Next push time {next_push_time.isoformat()}. Triggering push!")
+                
+                # 1. 產生並推送知識
+                knowledge = generate_astrology_knowledge()
+                push_to_groups(knowledge)
+
+                # 2. 交替間隔天數並計算下一次時間
+                # 交替頻率為：2天 -> 3天 -> 2天 -> 3天
+                current_interval = next_interval
+                new_next_interval = 3 if current_interval == 2 else 2
+                
+                # 計算下一次推送日期
+                new_next_push_time = get_next_push_time(next_push_time, current_interval)
+                
+                # 更新狀態
+                state["last_push_time"] = now.isoformat()
+                state["next_interval"] = new_next_interval
+                state["next_push_time"] = new_next_push_time.isoformat()
+                
+                with open(STATE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=4)
+                print(f"[Scheduler] Push finished. Next interval: {new_next_interval} days. Next push time: {new_next_push_time.isoformat()}")
+
+        except Exception as e:
+            print(f"[Scheduler] Error in scheduler loop: {e}")
+        
+        # 每分鐘檢查一次
+        time.sleep(60)
+
+def check_single_instance():
+    """綁定本地特定連接埠，確保在多程序（如 Gunicorn worker）部署時只有一個實例在跑排程"""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(('127.0.0.1', 12999))
+        check_single_instance.lock_socket = s
+        return True
+    except socket.error:
+        return False
+
+# ── 啟動後台排程器線程 ──────────────────────────────────────────────────
+# 只有在主進程，或是被成功分配到 socket 鎖的 worker 進程才會啟動排程
+if __name__ == "__main__" or check_single_instance():
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
