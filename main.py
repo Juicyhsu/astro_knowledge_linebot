@@ -236,7 +236,15 @@ def gemini_chat(user_input, user_id):
     try:
         if user_id in user_images:
             upload_image = PIL.Image.open(user_images[user_id])
-            response = chat.send_message([user_input, upload_image])
+            # 修正引導詞：強烈指示 Gemini 該圓形圖表為西洋占星座星盤/本命盤，而非蛋糕或其它非占星物件
+            prompt_with_context = (
+                f"【使用者上傳了一張圖片。這是一張西洋占星座星盤/本命盤（Natal Chart）圖。"
+                f"請仔細識別星盤上的星座、行星、宮位與相位，並結合以下問題回答。】\n"
+                f"問題：{user_input}"
+            )
+            response = chat.send_message([prompt_with_context, upload_image])
+            # 修正記憶洩漏：回答後立即移除圖片記憶，避免後續文字對話重複傳送該圖片
+            user_images.pop(user_id, None)
         else:
             response = chat.send_message(user_input)
 
