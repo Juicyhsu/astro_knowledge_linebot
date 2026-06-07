@@ -1,13 +1,18 @@
 import sys
 import os
 import re
-from datetime import datetime, timedelta, time as datetime_time
+from datetime import datetime, timedelta, timezone, time as datetime_time
 import json
 import threading
 import time
 
 from dotenv import load_dotenv
 load_dotenv()
+
+from flatlib.datetime import Datetime
+from flatlib.geopos import GeoPos
+from flatlib.chart import Chart
+from flatlib import const
 
 import google.generativeai as genai
 import PIL
@@ -250,6 +255,49 @@ def message_image(event):
             except Exception as reply_err:
                 print(f"Failed to send failure message: {reply_err}")
 
+def get_current_astrology_context():
+    """使用 flatlib 計算當下（即時）所有行星在黃道十二星座的精確位置"""
+    try:
+        now = datetime.now(timezone.utc)
+        date_str = now.strftime('%Y/%m/%d')
+        time_str = now.strftime('%H:%M')
+        
+        date = Datetime(date_str, time_str, '+00:00')
+        pos = GeoPos('25n03', '121e30')  # 預設台北座標
+        chart = Chart(date, pos, IDs=const.LIST_OBJECTS)
+        
+        planets = [
+            (const.SUN, '太陽'),
+            (const.MOON, '月亮'),
+            (const.MERCURY, '水星'),
+            (const.VENUS, '金星'),
+            (const.MARS, '火星'),
+            (const.JUPITER, '木星'),
+            (const.SATURN, '土星'),
+            (const.URANUS, '天王星'),
+            (const.NEPTUNE, '海王星'),
+            (const.PLUTO, '冥王星')
+        ]
+        
+        sign_map = {
+            'Aries': '牡羊座', 'Taurus': '金牛座', 'Gemini': '雙子座', 'Cancer': '巨蟹座',
+            'Leo': '獅子座', 'Virgo': '處女座', 'Libra': '天秤座', 'Scorpio': '天蠍座',
+            'Sagittarius': '射手座', 'Capricorn': '摩羯座', 'Aquarius': '水瓶座', 'Pisces': '雙魚座'
+        }
+        
+        out = []
+        for pid, name in planets:
+            obj = chart.getObject(pid)
+            if obj:
+                sign_zh = sign_map.get(obj.sign, obj.sign)
+                deg_in_sign = obj.lon % 30
+                out.append(f"{name}在{sign_zh} ({deg_in_sign:.1f}°)")
+                
+        return "，".join(out)
+    except Exception as e:
+        print(f"Error calculating astrology context: {e}")
+        return None
+
 # ── Gemini 對話（含記憶） ─────────────────────────────────────
 def gemini_chat(user_input, user_id):
     global chat_sessions, last_activity, user_images
@@ -281,7 +329,11 @@ def gemini_chat(user_input, user_id):
     chat = chat_sessions[user_id]
 
     now_str = datetime.now().strftime("%Y年%m月%d日")
+    astro_positions = get_current_astrology_context()
+    
     time_context = f"【系統提示：當前的真實地球日期是 {now_str}。請以此作為「今天、現在、當下」來計算與分析流年行運，絕對不要搞錯年份！】\n"
+    if astro_positions:
+        time_context += f"【系統提供天文星曆（當前真實星體位置）：{astro_positions}。請以此作為目前天上的實時行運（Transit）星象數據來解讀星盤與回答問題！】\n"
 
     try:
         if user_id in user_images:
