@@ -17,6 +17,7 @@ from linebot.v3.webhooks import (
     MessageEvent,
     TextMessageContent,
     ImageMessageContent,
+    JoinEvent,
 )
 from linebot.v3.messaging import (
     Configuration,
@@ -124,6 +125,22 @@ def callback():
     except InvalidSignatureError:
         abort(400)
     return "OK"
+
+# ── 加入群組事件 ──────────────────────────────────────────────
+@handler.add(JoinEvent)
+def handle_join(event):
+    # 當機器人加入群組時發送歡迎訊息
+    try:
+        with ApiClient(configuration) as api_client:
+            line_bot_api = MessagingApi(api_client)
+            line_bot_api.reply_message_with_http_info(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[TextMessage(text="大家好！我是西洋占星助理。🔮\n在群組中，請 @我 並輸入您的問題，我就會為您解答占星知識喔！✨")],
+                )
+            )
+    except Exception as e:
+        print(f"Error handling JoinEvent: {e}")
 
 # ── 文字訊息 ──────────────────────────────────────────────────
 @handler.add(MessageEvent, message=TextMessageContent)
