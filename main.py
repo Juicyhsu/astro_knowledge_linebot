@@ -169,12 +169,6 @@ def message_text(event):
 # ── 圖片訊息 ──────────────────────────────────────────────────
 @handler.add(MessageEvent, message=ImageMessageContent)
 def message_image(event):
-    # 群組：圖片沒有 @ 就忽略
-    if event.source.type in ("group", "room"):
-        mention = getattr(event.message, "mention", None)
-        if not mention:
-            return
-
     user_id = event.source.user_id
 
     try:
@@ -188,20 +182,32 @@ def message_image(event):
             f.write(message_content)
 
         user_images[user_id] = image_path
-        finish_message = "星盤圖片收到了 🌙 請問你想了解哪個部分呢？"
+
+        # 如果是群組/多人聊天，我們不主動回覆「收到圖片」以避免洗版，僅在私聊時進行提示
+        if event.source.type not in ("group", "room"):
+            with ApiClient(configuration) as api_client:
+                line_bot_api = MessagingApi(api_client)
+                line_bot_api.reply_message_with_http_info(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[TextMessage(text="星盤圖片收到了 🌙 請問你想了解哪個部分呢？")],
+                    )
+                )
 
     except Exception as e:
         print(f"Image upload error: {e}")
-        finish_message = "圖片上傳失敗，請再試一次。"
-
-    with ApiClient(configuration) as api_client:
-        line_bot_api = MessagingApi(api_client)
-        line_bot_api.reply_message_with_http_info(
-            ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[TextMessage(text=finish_message)],
-            )
-        )
+        if event.source.type not in ("group", "room"):
+            try:
+                with ApiClient(configuration) as api_client:
+                    line_bot_api = MessagingApi(api_client)
+                    line_bot_api.reply_message_with_http_info(
+                        ReplyMessageRequest(
+                            reply_token=event.reply_token,
+                            messages=[TextMessage(text="圖片上傳失敗，請再試一次。")],
+                        )
+                    )
+            except Exception as reply_err:
+                print(f"Failed to send failure message: {reply_err}")
 
 # ── Gemini 對話（含記憶） ─────────────────────────────────────
 def gemini_chat(user_input, user_id):
