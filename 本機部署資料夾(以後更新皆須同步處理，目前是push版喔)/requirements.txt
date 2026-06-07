@@ -5,4 +5,4 @@ pillow>=10.3.0
 python-dotenv>=1.0.0
 gunicorn>=21.2.0
 flatlib>=0.2.3
-pyswisseph>=2.10.3.2
+pysweph
