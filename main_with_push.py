@@ -137,7 +137,7 @@ def is_mentioned_in_text(event):
         mention
         and mention.mentionees
         and bot_id
-        and any(m.user_id == bot_id for m in mention.mentionees)
+        and any(getattr(m, "user_id", None) == bot_id for m in mention.mentionees)
     )
 
 # ── Webhook ───────────────────────────────────────────────────
