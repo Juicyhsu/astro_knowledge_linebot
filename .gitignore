@@ -29,3 +29,7 @@ ENV/
 
 # Project specific
 static/
+
+# Group IDs and Scheduler State
+group_ids.txt
+scheduler_state.json
