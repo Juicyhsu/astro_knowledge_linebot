@@ -360,6 +360,7 @@ def gemini_chat(user_input, user_id):
         return "占星助理暫時出了點問題，請稍後再試 🌙"
 
 # ── 定時推播占星知識邏輯 ───────────────────────────────────────────
+
 def generate_astrology_knowledge():
     """使用 Gemini 生成一則約 200~250 字的占星知識"""
     try:
@@ -394,6 +395,7 @@ def generate_astrology_knowledge():
             "而月亮在金牛座的人則渴望穩定與感官的舒適，常常透過美食或安靜的個人空間來療癒自我。"
             "理解自己的月亮星座，能幫助我們在面對壓力和負面情緒時，找到最適合自己的心理排解與自我照顧方式喔！✨"
         )
+
 
 def push_to_groups(message):
     """將訊息推播到 group_ids.txt 中的所有群組"""
