@@ -380,6 +380,7 @@ def generate_astrology_knowledge():
                 "你是一位專業且溫暖的西洋占星助理。請撰寫一則有趣、深入且好懂的占星知識分享。"
                 "主題可以包含：星座神話、行星相位意涵、宮位解析小技巧或行運對日常生活的影響等。"
                 "使用繁體中文。請控制字數在 200~250 字之間，不可超過 250 字。語氣要親切專業。"
+                "【重要】不可使用 Markdown 格式（不可使用 **粗體**、*斜體*、# 標題、- 列表等符號），請輸出純文字。"
             )
         )
         response = push_model.generate_content("請提供一則西洋占星知識分享，字數在 200 至 250 字之間。")
@@ -438,10 +439,15 @@ def push_to_groups(message):
         except Exception as e:
             print(f"[Scheduler] Error cleaning invalid group IDs: {e}")
 
+TW_TZ = timezone(timedelta(hours=8))  # 台灣時區 UTC+8
+
 def get_next_push_time(base_time, interval_days):
-    """計算基於 base_time 加上指定天數後的早上 9 點"""
+    """計算基於 base_time 加上指定天數後的台灣時間早上 9 點（以 naive datetime 儲存）"""
     target_date = base_time + timedelta(days=interval_days)
-    return datetime.combine(target_date.date(), datetime_time(9, 0, 0))
+    # 台灣時間 09:00，轉換為 naive local datetime（Zeabur 伺服器為 UTC，所以用 UTC+8 偏移計算）
+    tw_9am = datetime.combine(target_date.date(), datetime_time(9, 0, 0), tzinfo=TW_TZ)
+    # 轉回 UTC naive datetime 以便與 datetime.utcnow() 比較
+    return tw_9am.astimezone(timezone.utc).replace(tzinfo=None)
 
 def run_scheduler():
     """後台排程器主循環"""
@@ -458,15 +464,16 @@ def run_scheduler():
                 except Exception as je:
                     print(f"[Scheduler] Error loading state JSON: {je}")
 
-            now = datetime.now()
+            now = datetime.utcnow()  # 使用 UTC 時間與儲存的 UTC 推播時間比較
 
             # 初始化狀態
             if not state or "next_push_time" not in state:
-                today_9am = datetime.combine(now.date(), datetime_time(9, 0, 0))
-                if now < today_9am:
-                    next_push = today_9am
+                # 計算今天台灣時間 09:00 對應的 UTC 時間
+                today_tw_9am_utc = datetime.combine(now.date(), datetime_time(1, 0, 0))  # 09:00 TW = 01:00 UTC
+                if now < today_tw_9am_utc:
+                    next_push = today_tw_9am_utc
                 else:
-                    next_push = today_9am + timedelta(days=1)
+                    next_push = today_tw_9am_utc + timedelta(days=1)
                 
                 state = {
                     "last_push_time": None,
