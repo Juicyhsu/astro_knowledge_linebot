@@ -128,6 +128,41 @@ def save_group_id(group_id):
     except Exception as e:
         print(f"Error saving group ID: {e}")
 
+def load_all_group_ids():
+    """合併讀取 group_ids.txt 與環境變數 PUSH_GROUP_IDS 中的群組 ID。
+    環境變數格式：逗號分隔的群組 ID，例如 'Cxxx,Cyyy'
+    這樣即使伺服器重新部署導致 group_ids.txt 被清除，備份的 ID 仍可讀取。"""
+    group_ids = set()
+    # 1. 從檔案讀取（動態儲存的 ID）
+    if os.path.exists("group_ids.txt"):
+        with open("group_ids.txt", "r", encoding="utf-8") as f:
+            for line in f:
+                gid = line.strip()
+                if gid and (gid.startswith("C") or gid.startswith("R")):
+                    group_ids.add(gid)
+    # 2. 從環境變數讀取（備份/種子 ID）
+    env_ids = os.environ.get("PUSH_GROUP_IDS", "")
+    for gid in env_ids.split(","):
+        gid = gid.strip()
+        if gid and (gid.startswith("C") or gid.startswith("R")):
+            group_ids.add(gid)
+    return group_ids
+
+def seed_group_ids_from_env():
+    """啟動時將環境變數 PUSH_GROUP_IDS 中的 ID 寫入 group_ids.txt，
+    確保重新部署後仍能從備份環境變數恢復群組清單。"""
+    env_ids = os.environ.get("PUSH_GROUP_IDS", "")
+    if not env_ids.strip():
+        return
+    restored = 0
+    for gid in env_ids.split(","):
+        gid = gid.strip()
+        if gid and (gid.startswith("C") or gid.startswith("R")):
+            save_group_id(gid)
+            restored += 1
+    if restored:
+        print(f"[Scheduler] Restored {restored} group ID(s) from PUSH_GROUP_IDS env var.")
+
 # ── 工具函數 ──────────────────────────────────────────────────
 def is_mentioned_in_text(event):
     """文字訊息的 @ 判斷"""
@@ -398,16 +433,11 @@ def generate_astrology_knowledge():
 
 
 def push_to_groups(message):
-    """將訊息推播到 group_ids.txt 中的所有群組"""
-    if not os.path.exists("group_ids.txt"):
-        print("[Scheduler] No group IDs file found. Skipping push.")
-        return
-    
-    with open("group_ids.txt", "r", encoding="utf-8") as f:
-        group_ids = [line.strip() for line in f if line.strip()]
+    """將訊息推播到所有已知群組（合併 group_ids.txt 與環境變數 PUSH_GROUP_IDS）"""
+    group_ids = list(load_all_group_ids())
 
     if not group_ids:
-        print("[Scheduler] No group IDs saved. Skipping push.")
+        print("[Scheduler] No group IDs found (file or env var). Skipping push.")
         return
 
     print(f"[Scheduler] Starting push to {len(group_ids)} groups...")
@@ -430,10 +460,14 @@ def push_to_groups(message):
                 if "Failed to send messages" in str(e) or "400" in str(e) or "404" in str(e):
                     failed_groups.append(gid)
     
-    # 清除失效的群組 ID
+    # 清除失效的群組 ID（只清除 group_ids.txt 中的，環境變數留給使用者手動管理）
     if failed_groups:
         try:
-            current_ids = [g for g in group_ids if g not in failed_groups]
+            file_ids = []
+            if os.path.exists("group_ids.txt"):
+                with open("group_ids.txt", "r", encoding="utf-8") as f:
+                    file_ids = [line.strip() for line in f if line.strip()]
+            current_ids = [g for g in file_ids if g not in failed_groups]
             with open("group_ids.txt", "w", encoding="utf-8") as f:
                 for cid in current_ids:
                     f.write(f"{cid}\n")
@@ -454,6 +488,8 @@ def get_next_push_time(base_time, interval_days):
 def run_scheduler():
     """後台排程器主循環"""
     print("[Scheduler] Scheduler thread started.")
+    # 啟動時從環境變數恢復群組 ID（防止重新部署導致 group_ids.txt 遺失）
+    seed_group_ids_from_env()
     STATE_FILE = "scheduler_state.json"
     
     while True:
