@@ -58,7 +58,7 @@ ASTROLOGY_SYSTEM_PROMPT = """
 """
 
 model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
+    model_name="gemini-2.0-flash",  # avoid thinking-mode artifacts from 2.5
     safety_settings={
         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -396,11 +396,26 @@ def gemini_chat(user_input, user_id):
 
 # ── 定時推播占星知識邏輯 ───────────────────────────────────────────
 
+def clean_text_for_line(text):
+    """Remove invisible control characters that cause LINE message truncation."""
+    import unicodedata
+    cleaned = ""
+    for ch in text:
+        if ch == '\n':
+            cleaned += ch
+        elif ch == '\r':
+            continue
+        elif unicodedata.category(ch).startswith('C') and ord(ch) < 128:
+            continue
+        else:
+            cleaned += ch
+    return cleaned.strip()
+
 def generate_astrology_knowledge():
     """使用 Gemini 生成一則約 200~250 字的占星知識"""
     try:
         push_model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-2.0-flash",  # avoid thinking-mode artifacts from 2.5
             safety_settings={
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -420,7 +435,10 @@ def generate_astrology_knowledge():
             )
         )
         response = push_model.generate_content("請提供一則西洋占星知識分享，字數在 200 至 250 字之間。")
-        return response.text.strip()
+        raw_text = response.text.strip()
+        text = clean_text_for_line(raw_text)
+        print(f"[Scheduler] Generated knowledge ({len(text)} chars): {repr(text[:100])}...")
+        return text
     except Exception as e:
         print(f"[Scheduler] Error generating astrology knowledge: {e}")
         return (
