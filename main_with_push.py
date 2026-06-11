@@ -58,7 +58,7 @@ ASTROLOGY_SYSTEM_PROMPT = """
 """
 
 model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash",  # avoid thinking-mode artifacts from 2.5
+    model_name="gemini-3.5-flash",  # avoid thinking-mode artifacts from 2.5
     safety_settings={
         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -415,7 +415,7 @@ def generate_astrology_knowledge():
     """使用 Gemini 生成一則約 200~250 字的占星知識"""
     try:
         push_model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",  # avoid thinking-mode artifacts from 2.5
+            model_name="gemini-3.5-flash",  # avoid thinking-mode artifacts from 2.5
             safety_settings={
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
