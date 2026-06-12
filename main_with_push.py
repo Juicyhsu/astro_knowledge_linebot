@@ -54,7 +54,7 @@ ASTROLOGY_SYSTEM_PROMPT = """
 - 可主動補充相關延伸知識
 - 若收到星盤圖片但資訊不清晰，請告知使用者並請他補充文字說明
 
-【重要】每次回答字數控制在 120 字以內，不可超過。
+【重要】每次回答字數控制在 200 至 250 字之間，不可超過 250 字。
 """
 
 model = genai.GenerativeModel(
@@ -388,7 +388,7 @@ def gemini_chat(user_input, user_id):
 
         print(f"[Q] {user_input}")
         print(f"[A] {response.text}")
-        return response.text
+        return clean_text_for_line(response.text)
 
     except Exception as e:
         print(f"Gemini error: {e}")
@@ -405,8 +405,11 @@ def clean_text_for_line(text):
             cleaned += ch
         elif ch == '\r':
             continue
-        elif unicodedata.category(ch).startswith('C') and ord(ch) < 128:
-            continue
+        elif unicodedata.category(ch).startswith('C'):
+            if ch in ('\u200c', '\u200d'):
+                cleaned += ch
+            else:
+                continue
         else:
             cleaned += ch
     return cleaned.strip()
