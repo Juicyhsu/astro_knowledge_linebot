@@ -63,3 +63,9 @@ python main.py
    - 將 Webhook URL 設定為：`https://xxxx.ngrok-free.app/callback`
    - 點擊 **Verify** 測試連線是否成功。
    - 開啟 **Use webhook** 功能。
+
+---
+
+## 技術文件與開發參考
+
+- [LINE Bot 訊息截斷問題關鍵修復參考手冊](file:///c:/Users/User/Desktop/LINEBOT/占星知識機器人/LINE_BOT_TRUNCATION_GUIDE.md)：詳細記錄了 LLM 生成隱形 Unicode 控制字元（如零寬空格 `\u200b`）導致 LINE 訊息隨機截斷的成因與 `clean_text_for_line` 過濾器解決方案。
