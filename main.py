@@ -149,17 +149,27 @@ def handle_join(event):
 # ── 文字訊息 ──────────────────────────────────────────────────
 @handler.add(MessageEvent, message=TextMessageContent)
 def message_text(event):
-    # 群組：沒被 @ 就不回應
-    if event.source.type in ("group", "room"):
+    # 群組：沒被 @ 就不回應，並建立独立的 session_key（隔離私訊 vs 群組記憶）
+    user_id = event.source.user_id
+    if event.source.type == "group":
         if not is_mentioned_in_text(event):
             return
+        # 群組記憶隔離：key = group_{group_id}_{user_id}
+        session_key = f"group_{event.source.group_id}_{user_id}"
+    elif event.source.type == "room":
+        if not is_mentioned_in_text(event):
+            return
+        # 多人聊天室記憶隔離：key = room_{room_id}_{user_id}
+        session_key = f"room_{event.source.room_id}_{user_id}"
+    else:
+        # 私訊：僅用 user_id
+        session_key = user_id
 
-    user_id = event.source.user_id
     clean_text = re.sub(r"@\S+\s*", "", event.message.text).strip()
     if not clean_text:
         clean_text = "你好"
 
-    result = gemini_chat(clean_text, user_id)
+    result = gemini_chat(clean_text, session_key)
 
     with ApiClient(configuration) as api_client:
         line_bot_api = MessagingApi(api_client)
@@ -277,8 +287,12 @@ def clean_text_for_line(text):
     return cleaned.strip()
 
 # ── Gemini 對話（含記憶） ─────────────────────────────────────
-def gemini_chat(user_input, user_id):
+def gemini_chat(user_input, session_key):
     global chat_sessions, last_activity, user_images
+
+    # session_key 可能是 user_id（私訊）或 group_{group_id}_{user_id}（群組）
+    # user_images 仍然以真實 user_id 為 key（圖片只能在私訊上傳）
+    user_id = session_key.split("_")[-1] if "_" in session_key else session_key
 
     # 檢查 Gemini API Key 是否存在
     gemini_key = os.environ.get("GEMINI_API_KEY")
@@ -288,23 +302,23 @@ def gemini_chat(user_input, user_id):
     # 清除記憶
     clear_keywords = ["重新開始", "清除記憶", "忘記我", "重置對話", "清空記憶", "reset", "重來"]
     if any(kw in user_input for kw in clear_keywords):
-        chat_sessions.pop(user_id, None)
-        last_activity.pop(user_id, None)
+        chat_sessions.pop(session_key, None)
+        last_activity.pop(session_key, None)
         user_images.pop(user_id, None)
         return "好的，記憶已清除，讓我們重新開始！有什麼占星問題想問我嗎？✨"
 
     # 過期檢查
     now = datetime.now()
-    if user_id in last_activity:
-        if now - last_activity[user_id] > SESSION_TIMEOUT:
-            chat_sessions.pop(user_id, None)
+    if session_key in last_activity:
+        if now - last_activity[session_key] > SESSION_TIMEOUT:
+            chat_sessions.pop(session_key, None)
             user_images.pop(user_id, None)
 
-    if user_id not in chat_sessions:
-        chat_sessions[user_id] = model.start_chat(history=[])
+    if session_key not in chat_sessions:
+        chat_sessions[session_key] = model.start_chat(history=[])
 
-    last_activity[user_id] = now
-    chat = chat_sessions[user_id]
+    last_activity[session_key] = now
+    chat = chat_sessions[session_key]
 
     now_str = datetime.now().strftime("%Y年%m月%d日")
     astro_positions = get_current_astrology_context()
