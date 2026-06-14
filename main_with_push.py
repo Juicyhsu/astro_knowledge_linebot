@@ -34,6 +34,26 @@ from linebot.v3.messaging import (
     PushMessageRequest,
 )
 
+# ── 工具函數：文字清洗（防止 LINE 截斷） ───────────────────────────
+import unicodedata
+
+def clean_text_for_line(text):
+    """Remove invisible control characters that cause LINE message truncation."""
+    cleaned = ""
+    for ch in text:
+        if ch == '\n':
+            cleaned += ch
+        elif ch == '\r':
+            continue
+        elif unicodedata.category(ch).startswith('C'):
+            if ch in ('\u200c', '\u200d'):
+                cleaned += ch
+            else:
+                continue
+        else:
+            cleaned += ch
+    return cleaned.strip()
+
 # ── Gemini 設定 ──────────────────────────────────────────────
 gemini_key = os.environ.get("GEMINI_API_KEY")
 if not gemini_key or gemini_key == "YOUR_GEMINI_API_KEY":
@@ -397,24 +417,6 @@ def gemini_chat(user_input, user_id):
         return "占星助理暫時出了點問題，請稍後再試 🌙"
 
 # ── 定時推播占星知識邏輯 ───────────────────────────────────────────
-
-def clean_text_for_line(text):
-    """Remove invisible control characters that cause LINE message truncation."""
-    import unicodedata
-    cleaned = ""
-    for ch in text:
-        if ch == '\n':
-            cleaned += ch
-        elif ch == '\r':
-            continue
-        elif unicodedata.category(ch).startswith('C'):
-            if ch in ('\u200c', '\u200d'):
-                cleaned += ch
-            else:
-                continue
-        else:
-            cleaned += ch
-    return cleaned.strip()
 
 def generate_astrology_knowledge():
     """使用 Gemini 生成一則約 200~250 字的占星知識"""
