@@ -96,3 +96,64 @@ line_bot_api.reply_message(
 1. **一律過濾**：不管是 Gemini、OpenAI 還是 Claude，只要是由 AI 生成的文字，在丟給 LINE 發送前**一律先過濾**。
 2. **推播 (Push) 與回覆 (Reply) 都要處理**：推播與回覆呼叫的是不同的 API 端點，但後端的解析器是同一個，所以兩邊的訊息傳送點都必須包上 `clean_text_for_line`。
 3. **字數保底**：LINE 單一文字訊息（TextMessage）的上限是 5000 字，但若發生隨機截斷，通常是這類隱形字元引起，而非真正超出字數限制。
+4. **函數定義順序：必須放在所有呼叫點之前**（⚠️ 進階陷阱，見下方說明）。
+
+---
+
+## 6. ⚠️ 進階陷阱：函數定義順序與 Gunicorn 多進程 (Function Definition Order)
+
+### 問題描述
+即使正確實作了 `clean_text_for_line`，如果**函數的定義位置排在呼叫它的函數之後**，在 Gunicorn 多進程部署環境（如 Zeabur、Heroku、Railway）下，截斷問題仍然可能**間歇性復發**。
+
+### 範例：有問題的排列方式（❌ 錯誤）
+```python
+# ❌ 錯誤：gemini_chat 在第 338 行呼叫 clean_text_for_line
+def gemini_chat(user_input, user_id):
+    ...
+    return clean_text_for_line(response.text)  # 在這裡呼叫
+
+# ❌ 錯誤：但 clean_text_for_line 的定義卻在第 401 行，排在後面！
+def clean_text_for_line(text):
+    ...
+```
+
+### 為什麼有問題？
+- Python 本身在一般執行下沒問題（函數是執行期才查找的）。
+- 但在 Gunicorn 啟動時，多個 worker 進程會並行進行模組 import。若某個 worker 的載入時序剛好在 `clean_text_for_line` 定義完成前就觸發了呼叫（例如在處理一個啟動時的健康檢查請求），就會找不到這個函數，靜默失敗，回傳**未清洗的原始文字**，截斷就又出現了。
+- 這也解釋了為何截斷問題「時好時壞」——因為它取決於 Gunicorn worker 的啟動時序，是**隨機性的 race condition（競態條件）**。
+
+### 正確作法（✅ 確保萬無一失）
+**將 `clean_text_for_line` 定義移到程式碼最頂端，緊接在 `import` 之後，所有其他函數之前：**
+
+```python
+import unicodedata
+from linebot.v3.messaging import ...  # 所有 import 完成後
+
+# ✅ 正確：在所有函數定義之前，先定義這個工具函數
+def clean_text_for_line(text: str) -> str:
+    """Remove invisible control characters that cause LINE message truncation."""
+    cleaned = []
+    for ch in text:
+        if ch == '\n':
+            cleaned.append(ch)
+            continue
+        elif ch == '\r':
+            continue
+        category = unicodedata.category(ch)
+        if category.startswith('C'):
+            if ch in ('\u200c', '\u200d'):
+                cleaned.append(ch)
+            else:
+                continue
+        else:
+            cleaned.append(ch)
+    return "".join(cleaned).strip()
+
+# 然後才是其他函數定義...
+def gemini_chat(...):
+    ...
+    return clean_text_for_line(response.text)  # 此時一定已經定義好了 ✅
+```
+
+### 重點提醒
+> 「先寫後用」是最安全的原則。`clean_text_for_line` 應視為整個 LINE Bot 最底層的基礎工具函數，永遠排在第一個被定義。
