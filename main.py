@@ -1,6 +1,9 @@
 import sys
 import os
 import re
+import json
+import unicodedata
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -269,22 +272,65 @@ def get_current_astrology_context():
         return None
 
 def clean_text_for_line(text):
-    """Remove invisible control characters that cause LINE message truncation."""
-    import unicodedata
-    cleaned = ""
+    """Remove/replace characters that cause LINE message truncation."""
+    if not text:
+        return ""
+    cleaned = []
     for ch in text:
         if ch == '\n':
-            cleaned += ch
+            cleaned.append(ch)
         elif ch == '\r':
             continue
+        elif ch in ('\u2028', '\u2029'):
+            cleaned.append('\n')
         elif unicodedata.category(ch).startswith('C'):
             if ch in ('\u200c', '\u200d'):
-                cleaned += ch
-            else:
-                continue
+                cleaned.append(ch)
         else:
-            cleaned += ch
-    return cleaned.strip()
+            cleaned.append(ch)
+    return "".join(cleaned).strip()
+
+LATEST_PUSH_FILE = "latest_push.txt"
+
+def _session_filepath(session_key):
+    h = hashlib.md5(session_key.encode()).hexdigest()
+    os.makedirs("sessions", exist_ok=True)
+    return os.path.join("sessions", f"{h}.json")
+
+def load_latest_push():
+    try:
+        if os.path.exists(LATEST_PUSH_FILE):
+            with open(LATEST_PUSH_FILE, "r", encoding="utf-8") as f:
+                return f.read().strip()
+    except Exception as e:
+        print(f"[Push] Error loading latest push: {e}")
+    return None
+
+def save_session_history(session_key, chat):
+    try:
+        history = []
+        for content in chat.history:
+            try:
+                parts = [p.text for p in content.parts if hasattr(p, 'text') and p.text]
+                if parts:
+                    history.append({"role": content.role, "parts": parts})
+            except Exception:
+                continue
+        history = history[-20:]
+        with open(_session_filepath(session_key), "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[Session] Error saving: {e}")
+
+def load_session_history(session_key):
+    try:
+        fpath = _session_filepath(session_key)
+        if os.path.exists(fpath):
+            with open(fpath, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"[Session] Error loading: {e}")
+    return []
 
 # ── Gemini 對話（含記憶） ─────────────────────────────────────
 def gemini_chat(user_input, session_key):
@@ -305,6 +351,12 @@ def gemini_chat(user_input, session_key):
         chat_sessions.pop(session_key, None)
         last_activity.pop(session_key, None)
         user_images.pop(user_id, None)
+        try:
+            fpath = _session_filepath(session_key)
+            if os.path.exists(fpath):
+                os.remove(fpath)
+        except Exception:
+            pass
         return "好的，記憶已清除，讓我們重新開始！有什麼占星問題想問我嗎？✨"
 
     # 過期檢查
@@ -314,8 +366,24 @@ def gemini_chat(user_input, session_key):
             chat_sessions.pop(session_key, None)
             user_images.pop(user_id, None)
 
+    continue_keywords = ["接著講", "繼續", "接下去", "繼續說", "然後呢"]
+
     if session_key not in chat_sessions:
-        chat_sessions[session_key] = model.start_chat(history=[])
+        saved_history = load_session_history(session_key)
+        if saved_history:
+            chat_sessions[session_key] = model.start_chat(history=saved_history)
+        elif any(kw in user_input for kw in continue_keywords):
+            latest_push = load_latest_push()
+            if latest_push:
+                seed_history = [
+                    {"role": "user", "parts": ["（系統注入）以下是機器人最近一次推播的占星知識，請以此作為上次分享的內容：\n" + latest_push]},
+                    {"role": "model", "parts": [latest_push]},
+                ]
+                chat_sessions[session_key] = model.start_chat(history=seed_history)
+            else:
+                chat_sessions[session_key] = model.start_chat(history=[])
+        else:
+            chat_sessions[session_key] = model.start_chat(history=[])
 
     last_activity[session_key] = now
     chat = chat_sessions[session_key]
@@ -346,6 +414,7 @@ def gemini_chat(user_input, session_key):
 
         print(f"[Q] {user_input}")
         print(f"[A] {response.text}")
+        save_session_history(session_key, chat)
         return clean_text_for_line(response.text)
 
     except Exception as e:
