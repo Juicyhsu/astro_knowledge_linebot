@@ -91,7 +91,7 @@ def save_session_history(session_key, chat):
                     history.append({"role": content.role, "parts": parts})
             except Exception:
                 continue
-        history = history[-20:]
+        history = history[-15:]
         with open(_session_filepath(session_key), "w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False)
     except Exception as e:
@@ -181,7 +181,7 @@ def get_bot_user_id():
 chat_sessions = {}
 last_activity = {}
 user_images = {}
-SESSION_TIMEOUT = timedelta(days=7)
+SESSION_TIMEOUT = timedelta(hours=24)
 
 # ── 工具函數：儲存群組 ID ──────────────────────────────────────
 def save_group_id(group_id):
@@ -500,7 +500,12 @@ def gemini_chat(user_input, session_key):
         return clean_text_for_line(response.text)
 
     except Exception as e:
+        err_str = str(e)
         print(f"Gemini error: {e}")
+        if "429" in err_str or "quota" in err_str.lower() or "exhausted" in err_str.lower():
+            return "目前詢問量已達上限，請稍後幾分鐘再問我 🌙"
+        if "503" in err_str or "unavailable" in err_str.lower() or "high demand" in err_str.lower():
+            return "占星助理目前很忙，請稍後再試 🌙"
         return "占星助理暫時出了點問題，請稍後再試 🌙"
 
 # ── 定時推播占星知識邏輯 ───────────────────────────────────────────
